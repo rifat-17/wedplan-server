@@ -191,6 +191,131 @@ app.get("/services/:id", async (req, res) => {
 
 
 
+//booking related apis
+app.post("/bookings", verifyToken, async (req, res) => {
+  try {
+    const {
+      serviceId,
+      eventDate,
+      eventLocation,
+      additionalMessage,
+    } = req.body;
+
+    // Validate required fields
+    if (!serviceId || !eventDate || !eventLocation) {
+      return res.status(400).send({
+        message: "Service, event date, and event location are required.",
+      });
+    }
+
+    if (!ObjectId.isValid(serviceId)) {
+      return res.status(400).send({
+        message: "Invalid service ID.",
+      });
+    }
+
+    // Validate event date
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(eventDate) ||
+      !Number.isFinite(Date.parse(`${eventDate}T00:00:00Z`)) ||
+      new Date(`${eventDate}T00:00:00Z`).toISOString().slice(0, 10) !== eventDate
+    ) {
+      return res.status(400).send({
+        message: "Invalid event date.",
+      });
+    }
+
+    // Find the selected service
+    const service = await services.findOne({
+      _id: new ObjectId(serviceId),
+      status: "approved",
+      availability: "active",
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: "Service not found or unavailable.",
+      });
+    }
+
+    const customerId = req.user._id.toString();
+    const vendorId = service.vendorId;
+
+    // Prevent vendors from booking their own services
+    if (customerId === vendorId) {
+      return res.status(403).send({
+        message: "You cannot book your own service.",
+      });
+    }
+
+    // Prevent duplicate active booking requests
+    const existingBooking = await bookings.findOne({
+      serviceId,
+      customerId,
+      eventDate,
+      status: { $in: ["Pending", "Accepted"] },
+    });
+
+    if (existingBooking) {
+      return res.status(409).send({
+        message: "You already have an active booking for this service and event date.",
+      });
+    }
+
+    // Create booking
+    const newBooking = {
+      serviceId,
+      vendorId,
+      customerId,
+      eventDate,
+      eventLocation: eventLocation.trim(),
+      additionalMessage: additionalMessage?.trim() || "",
+      status: "Pending",
+      createdAt: new Date(),
+    };
+
+    const result = await bookings.insertOne(newBooking);
+
+    res.status(201).send({
+      message: "Booking request submitted successfully.",
+      booking: {
+        ...newBooking,
+        _id: result.insertedId,
+      },
+    });
+  } catch (error) {
+    console.error("Create booking error:", error);
+
+    res.status(500).send({
+      message: "Failed to create booking.",
+    });
+  }
+});
+
+//vendor bookings
+app.get("/vendor/bookings", verifyToken, verifyVendor, async (req, res) => {
+    try {
+        const vendorId = req.user._id.toString();
+
+        const vendorBookings = await bookings
+            .find({ vendorId })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        res.send({
+            bookings: vendorBookings,
+            total: vendorBookings.length,
+        });
+    } catch (error) {
+        console.error("Get vendor bookings error:", error);
+
+        res.status(500).send({
+            message: "Failed to fetch vendor bookings.",
+        });
+    }
+});
+
+
 //vendor related apis
 
 //vendor overview
