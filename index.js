@@ -125,7 +125,7 @@ const verifyAdmin = async (req, res, next) => {
   next();
 }
 
-
+//service related apis
 // Get all approved and active services
 app.get("/services", async (req, res) => {
   try {
@@ -153,6 +153,38 @@ app.get("/services", async (req, res) => {
     console.error("Get public services error:", error);
     res.status(500).send({
       message: "Failed to fetch services",
+    });
+  }
+});
+
+
+app.get("/services/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid service ID",
+      });
+    }
+
+    const service = await services.findOne({
+      _id: new ObjectId(id),
+      status: "approved",
+      availability: "active",
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: "Service not found",
+      });
+    }
+
+    res.send(service);
+  } catch (error) {
+    console.error("Get service details error:", error);
+    res.status(500).send({
+      message: "Failed to fetch service details",
     });
   }
 });
