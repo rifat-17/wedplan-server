@@ -368,6 +368,29 @@ app.patch(
 );
 
 
+//customer bookings
+app.get("/customer/bookings", verifyToken, async (req, res) => {
+  try {
+    const customerId = req.user._id.toString();
+
+    const customerBookings = await bookings
+      .find({ customerId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      bookings: customerBookings,
+      total: customerBookings.length,
+    });
+  } catch (error) {
+    console.error("Get customer bookings error:", error);
+
+    res.status(500).send({
+      message: "Failed to fetch customer bookings.",
+    });
+  }
+});
+
 //vendor related apis
 
 //vendor overview
