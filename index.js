@@ -128,27 +128,33 @@ const verifyAdmin = async (req, res, next) => {
 
 // Get all approved and active services
 app.get("/services", async (req, res) => {
-    try {
-        const allServices = await services
-            .find({
-                status: "approved",
-                availability: "active",
-            })
-            .sort({ createdAt: -1 })
-            .toArray();
+  try {
+    const { category } = req.query;
 
-        res.send({
-            services: allServices,
-            total: allServices.length,
-        });
+    const filter = {
+      status: "approved",
+      availability: "active",
+    };
 
-    } catch (error) {
-        console.error("Get public services error:", error);
-
-        res.status(500).send({
-            message: "Failed to fetch services",
-        });
+    if (category) {
+      filter.category = category;
     }
+
+    const servicesList = await services
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      services: servicesList,
+      total: servicesList.length,
+    });
+  } catch (error) {
+    console.error("Get public services error:", error);
+    res.status(500).send({
+      message: "Failed to fetch services",
+    });
+  }
 });
 
 
