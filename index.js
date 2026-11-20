@@ -897,36 +897,129 @@ app.get('/protected', verifyToken, (req, res) => {
 
 //delete
 app.delete("/admin/services/:id", verifyToken, verifyAdmin, async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        if (!ObjectId.isValid(id)) {
-            return res.status(400).send({
-                message: "Invalid service ID",
-            });
-        }
-
-        const result = await services.deleteOne({
-            _id: new ObjectId(id),
-        });
-
-        if (result.deletedCount === 0) {
-            return res.status(404).send({
-                message: "Service not found",
-            });
-        }
-
-        res.send({
-            message: "Service deleted successfully",
-        });
-
-    } catch (error) {
-        console.error("Delete service error:", error);
-
-        res.status(500).send({
-            message: "Failed to delete service",
-        });
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid service ID",
+      });
     }
+
+    const result = await services.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({
+        message: "Service not found",
+      });
+    }
+
+    res.send({
+      message: "Service deleted successfully",
+    });
+
+  } catch (error) {
+    console.error("Delete service error:", error);
+
+    res.status(500).send({
+      message: "Failed to delete service",
+    });
+  }
+});
+
+//transactions
+app.get("/admin/transactions", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { search, status, plan } = req.query;
+
+    const matchQuery = {};
+
+    const allowedStatuses = ["pending", "paid", "failed", "cancelled"];
+    const allowedPlans = ["PREMIUM", "FREE"];
+
+    if (status) {
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          message: "Invalid transaction status",
+        });
+      }
+
+      matchQuery.status = status;
+    }
+
+    if (plan) {
+      if (!allowedPlans.includes(plan)) {
+        return res.status(400).send({
+          message: "Invalid subscription plan",
+        });
+      }
+
+      matchQuery.plan = plan;
+    }
+
+    const pipeline = [
+      {
+        $addFields: {
+          vendorObjectId: {
+            $toObjectId: "$vendorId",
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "vendorObjectId",
+          foreignField: "_id",
+          as: "vendor",
+        },
+      },
+      {
+        $unwind: {
+          path: "$vendor",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+    ];
+
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { "vendor.name": { $regex: search, $options: "i" } },
+            { "vendor.email": { $regex: search, $options: "i" } },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      { $match: matchQuery },
+      {
+        $project: {
+          vendorObjectId: 0,
+          "vendor.password": 0,
+          "vendor.emailVerified": 0,
+        },
+      },
+      { $sort: { createdAt: -1 } }
+    );
+
+    const allTransactions = await transactions.aggregate(pipeline).toArray();
+
+    res.send({
+      transactions: allTransactions,
+      total: allTransactions.length,
+    });
+
+  } catch (error) {
+    console.error("Get transactions error:", error);
+
+    res.status(500).send({
+      message: "Failed to fetch transactions",
+    });
+  }
 });
 
 
