@@ -149,6 +149,7 @@ app.get('/vendor/dashboard-stats', verifyToken, async (req, res) => {
     const activeServices = await services.countDocuments({
       vendorId: vendorId.toString(),
       status: "approved",
+      availability: "active",
     });
 
     // Count pending booking requests
@@ -317,6 +318,60 @@ app.delete(
 
       res.status(500).send({
         message: "Failed to delete service",
+      });
+    }
+  }
+);
+
+
+//availability check
+app.patch(
+  "/vendor/services/:id/availability",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { availability } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid service ID",
+        });
+      }
+
+      if (!["active", "inactive"].includes(availability)) {
+        return res.status(400).send({
+          message: "Invalid availability value",
+        });
+      }
+
+      const result = await services.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.user._id.toString(),
+          status: "approved",
+        },
+        {
+          $set: { availability },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          message: "Approved service not found",
+        });
+      }
+
+      res.send({
+        message: "Service availability updated successfully",
+      });
+
+    } catch (error) {
+      console.error("Update service availability error:", error);
+
+      res.status(500).send({
+        message: "Failed to update service availability",
       });
     }
   }
