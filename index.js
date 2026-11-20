@@ -126,6 +126,7 @@ const verifyAdmin = async (req, res, next) => {
 }
 
 
+//vendor related apis
 
 //vendor overview
 app.get('/vendor/dashboard-stats', verifyToken, async (req, res) => {
@@ -178,6 +179,36 @@ app.get('/vendor/dashboard-stats', verifyToken, async (req, res) => {
     });
   }
 });
+
+
+// Get all services created by the authenticated vendor
+app.get(
+  "/vendor/services",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const vendorId = req.user._id.toString();
+
+      const vendorServices = await services
+        .find({ vendorId })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send({
+        services: vendorServices,
+        total: vendorServices.length,
+      });
+
+    } catch (error) {
+      console.error("Get vendor services error:", error);
+
+      res.status(500).send({
+        message: "Failed to fetch vendor services",
+      });
+    }
+  }
+);
 
 
 //service related apis
@@ -608,7 +639,6 @@ app.patch(
 );
 
 //unblock user
-
 app.patch(
   "/admin/users/:id/unblock",
   verifyToken,
@@ -663,7 +693,6 @@ app.patch(
 
 
 //users
-
 app.get(
   "/admin/users/:id",
   verifyToken,
@@ -714,7 +743,6 @@ app.get(
 
 
 //services
-
 app.get(
   "/admin/services",
   verifyToken,
