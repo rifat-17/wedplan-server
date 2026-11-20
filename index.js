@@ -125,6 +125,15 @@ const verifyAdmin = async (req, res, next) => {
   next();
 }
 
+//verifyCustomer
+const verifyCustomer = async (req, res, next) => {
+  if (req.user.role !== "CUSTOMER") {
+    res.status(403).send({ message: 'Forbidden' });
+    return;
+  }
+  next();
+}
+
 //service related apis
 // Get all approved and active services
 app.get("/services", async (req, res) => {
@@ -192,7 +201,7 @@ app.get("/services/:id", async (req, res) => {
 
 
 //booking related apis
-app.post("/bookings", verifyToken, async (req, res) => {
+app.post("/bookings", verifyToken, verifyCustomer, async (req, res) => {
   try {
     const {
       serviceId,
@@ -200,6 +209,20 @@ app.post("/bookings", verifyToken, async (req, res) => {
       eventLocation,
       additionalMessage,
     } = req.body;
+
+    //prevent add long location
+    if (eventLocation.length > 200) {
+      return res.status(400).send({
+        message: "Event location cannot exceed 200 characters.",
+      });
+    }
+
+    //prevent long paragraph
+    if (additionalMessage && additionalMessage.length > 500) {
+      return res.status(400).send({
+        message: "Additional message cannot exceed 500 characters.",
+      });
+    }
 
     // Validate required fields
     if (!serviceId || !eventDate || !eventLocation) {
@@ -222,6 +245,18 @@ app.post("/bookings", verifyToken, async (req, res) => {
     ) {
       return res.status(400).send({
         message: "Invalid event date.",
+      });
+    }
+
+    //force user to add future date
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const selectedDate = new Date(`${eventDate}T00:00:00`);
+
+    if (selectedDate < today) {
+      return res.status(400).send({
+        message: "Event date cannot be in the past.",
       });
     }
 
@@ -369,7 +404,7 @@ app.patch(
 
 
 //customer bookings
-app.get("/customer/bookings", verifyToken, async (req, res) => {
+app.get("/customer/bookings", verifyToken, verifyCustomer, async (req, res) => {
   try {
     const customerId = req.user._id.toString();
 
@@ -390,6 +425,54 @@ app.get("/customer/bookings", verifyToken, async (req, res) => {
     });
   }
 });
+
+
+//customer booking cancel
+app.patch(
+  "/customer/bookings/:id/cancel",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const customerId = req.user._id.toString();
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid booking ID.",
+        });
+      }
+
+      const result = await bookings.updateOne(
+        {
+          _id: new ObjectId(id),
+          customerId,
+          status: { $in: ["Pending", "Accepted"] },
+        },
+        {
+          $set: { status: "Cancelled" },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          message: "Booking not found or cannot be cancelled.",
+        });
+      }
+
+      res.send({
+        message: "Booking cancelled successfully.",
+      });
+    } catch (error) {
+      console.error("Cancel booking error:", error);
+
+      res.status(500).send({
+        message: "Failed to cancel booking.",
+      });
+    }
+  }
+);
+
 
 //vendor related apis
 
