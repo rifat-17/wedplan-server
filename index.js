@@ -33,6 +33,7 @@ const database = connectedClient.db("wedplan");
 const users = database.collection("users");
 const services = database.collection("services");
 const bookings = database.collection("bookings");
+const transactions = database.collection("transactions");
 
 
 //jwt middleware
@@ -42,6 +43,7 @@ const JWKS = createRemoteJWKSet(
   new URL('/api/auth/jwks', CLIENT_URL)
 );
 
+//verifyToken
 const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -51,6 +53,7 @@ const verifyToken = async (req, res, next) => {
         message: 'Unauthorized access',
       });
     }
+
 
     const token = authHeader.split(' ')[1];
 
@@ -101,12 +104,22 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-
+//vendor verify
 const verifyVendor = async (req, res, next) => {
   if (req.user.role !== "VENDOR") {
-    res.status(403).send({
-      message: "Forbidden: Vendor access only",
-    });
+    res.status(403).send({ message: 'Forbidden' });
+    return;
+  }
+  next();
+}
+
+//admin verify
+const verifyAdmin = async (req, res, next) => {
+
+  console.log("Authenticated user role:", req.user.role);
+
+  if (req.user.role !== "ADMIN") {
+    res.status(403).send({ message: 'Forbidden' });
     return;
   }
   next();
@@ -286,6 +299,317 @@ app.post("/services", verifyToken, verifyVendor, async (req, res) => {
   }
 });
 
+//admin related apis
+
+//admin dashboard
+app.get(
+  "/admin/dashboard-stats",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const [
+        totalUsers,
+        totalVendors,
+        totalCustomers,
+        totalServices,
+        pendingServices,
+        totalTransactions,
+      ] = await Promise.all([
+        users.countDocuments(),
+        users.countDocuments({ role: "VENDOR" }),
+        users.countDocuments({ role: "CUSTOMER" }),
+        services.countDocuments(),
+        services.countDocuments({ status: "pending" }),
+        transactions.countDocuments(),
+      ]);
+
+      res.send({
+        totalUsers,
+        totalVendors,
+        totalCustomers,
+        totalServices,
+        pendingServices,
+        totalTransactions,
+      });
+
+    } catch (error) {
+      console.error("Admin dashboard stats error:", error);
+
+      res.status(500).send({
+        message: "Failed to load admin dashboard statistics",
+      });
+    }
+  }
+);
+
+
+
+app.get(
+  "/admin/users",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { search, role } = req.query;
+
+      const query = {};
+
+      // Search by name or email
+      if (search) {
+        query.$or = [
+          { name: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      // Filter by user role
+      if (role && ["CUSTOMER", "VENDOR", "ADMIN"].includes(role)) {
+        query.role = role;
+      }
+
+      const allUsers = await users
+        .find(query)
+        .project({
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          isBlocked: 1,
+          subscriptionPlan: 1,
+          createdAt: 1,
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send({
+        users: allUsers,
+        total: allUsers.length,
+      });
+
+    } catch (error) {
+      console.error("Get users error:", error);
+
+      res.status(500).send({
+        message: "Failed to fetch users",
+      });
+    }
+  }
+);
+
+
+
+//admin approval
+app.patch("/admin/services/:id/approve", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    // 1. Only admins can approve services.
+    //verifyAdmin
+
+    // 2. Validate the service ID.
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid service ID",
+      });
+    }
+
+    // 3. Find the service.
+    const service = await services.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: "Service not found",
+      });
+    }
+
+    // 4. Only pending services can be approved.
+    if (service.status !== "pending") {
+      return res.status(400).send({
+        message: "Only pending services can be approved",
+      });
+    }
+
+    // 5. Find the vendor who owns this service.
+    if (!ObjectId.isValid(service.vendorId)) {
+      return res.status(400).send({
+        message: "Invalid vendor ID",
+      });
+    }
+
+    const vendor = await users.findOne({
+      _id: new ObjectId(service.vendorId),
+    });
+
+    if (!vendor) {
+      return res.status(404).send({
+        message: "Vendor not found",
+      });
+    }
+
+    // 6. Enforce the Free Plan limit.
+    if (vendor.subscriptionPlan !== "PREMIUM") {
+      const approvedCount = await services.countDocuments({
+        vendorId: service.vendorId,
+        status: "approved",
+      });
+
+      if (approvedCount >= 3) {
+        return res.status(409).send({
+          message: "This vendor has reached the Free Plan limit of 3 approved services. They must upgrade to Premium.",
+        });
+      }
+    }
+
+    // 7. Approve the service.
+    const result = await services.updateOne(
+      {
+        _id: new ObjectId(id),
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "approved",
+          approvedAt: new Date(),
+        },
+      }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(409).send({
+        message: "Service could not be approved. Please try again.",
+      });
+    }
+
+    res.send({
+      message: "Service approved successfully",
+    });
+
+  } catch (error) {
+    console.error("Approve service error:", error);
+
+    res.status(500).send({
+      message: "Failed to approve service",
+    });
+  }
+});
+
+//block users
+app.patch(
+  "/admin/users/:id/block",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Validate user ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid user ID",
+        });
+      }
+
+      // Find target user
+      const targetUser = await users.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!targetUser) {
+        return res.status(404).send({
+          message: "User not found",
+        });
+      }
+
+      // Prevent blocking yourself
+      if (req.user._id.toString() === id) {
+        return res.status(400).send({
+          message: "You cannot block your own account",
+        });
+      }
+
+      // Prevent blocking another admin
+      if (targetUser.role === "ADMIN") {
+        return res.status(403).send({
+          message: "You cannot block an admin account",
+        });
+      }
+
+      // Block user
+      await users.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { isBlocked: true } }
+      );
+
+      res.send({
+        message: "User blocked successfully",
+      });
+
+    } catch (error) {
+      console.error("Block user error:", error);
+
+      res.status(500).send({
+        message: "Failed to block user",
+      });
+    }
+  }
+);
+
+//unblock user
+
+app.patch(
+  "/admin/users/:id/unblock",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Validate user ID
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid user ID",
+        });
+      }
+
+      // Find target user
+      const targetUser = await users.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!targetUser) {
+        return res.status(404).send({
+          message: "User not found",
+        });
+      }
+
+      if (targetUser.role === "ADMIN") {
+        return res.status(403).send({
+          message: "Admin accounts cannot be modified here",
+        });
+      }
+
+      // Unblock user
+      await users.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { isBlocked: false } }
+      );
+
+      res.send({
+        message: "User unblocked successfully",
+      });
+
+    } catch (error) {
+      console.error("Unblock user error:", error);
+
+      res.status(500).send({
+        message: "Failed to unblock user",
+      });
+    }
+  }
+);
 
 
 app.get('/protected', verifyToken, (req, res) => {
