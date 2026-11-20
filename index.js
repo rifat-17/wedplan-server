@@ -211,6 +211,118 @@ app.get(
 );
 
 
+// Update a service created by the authenticated vendor
+app.patch(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid service ID",
+        });
+      }
+
+      const {
+        serviceName,
+        category,
+        description,
+        price,
+        location,
+        images,
+      } = req.body;
+
+      const updateData = {
+        serviceName,
+        category,
+        description,
+        price,
+        location,
+        images,
+      };
+
+      // Remove undefined fields
+      Object.keys(updateData).forEach((key) => {
+        if (updateData[key] === undefined) {
+          delete updateData[key];
+        }
+      });
+
+      const result = await services.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.user._id.toString(),
+        },
+        {
+          $set: updateData,
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          message: "Service not found",
+        });
+      }
+
+      res.send({
+        message: "Service updated successfully",
+      });
+
+    } catch (error) {
+      console.error("Update vendor service error:", error);
+
+      res.status(500).send({
+        message: "Failed to update service",
+      });
+    }
+  }
+);
+
+
+// Delete a service created by the authenticated vendor
+app.delete(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid service ID",
+        });
+      }
+
+      const result = await services.deleteOne({
+        _id: new ObjectId(id),
+        vendorId: req.user._id.toString(),
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          message: "Service not found",
+        });
+      }
+
+      res.send({
+        message: "Service deleted successfully",
+      });
+
+    } catch (error) {
+      console.error("Delete vendor service error:", error);
+
+      res.status(500).send({
+        message: "Failed to delete service",
+      });
+    }
+  }
+);
+
+
 //service related apis
 
 app.post("/services", verifyToken, verifyVendor, async (req, res) => {
