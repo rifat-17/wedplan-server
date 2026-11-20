@@ -294,26 +294,78 @@ app.post("/bookings", verifyToken, async (req, res) => {
 
 //vendor bookings
 app.get("/vendor/bookings", verifyToken, verifyVendor, async (req, res) => {
-    try {
-        const vendorId = req.user._id.toString();
+  try {
+    const vendorId = req.user._id.toString();
 
-        const vendorBookings = await bookings
-            .find({ vendorId })
-            .sort({ createdAt: -1 })
-            .toArray();
+    const vendorBookings = await bookings
+      .find({ vendorId })
+      .sort({ createdAt: -1 })
+      .toArray();
 
-        res.send({
-            bookings: vendorBookings,
-            total: vendorBookings.length,
-        });
-    } catch (error) {
-        console.error("Get vendor bookings error:", error);
+    res.send({
+      bookings: vendorBookings,
+      total: vendorBookings.length,
+    });
+  } catch (error) {
+    console.error("Get vendor bookings error:", error);
 
-        res.status(500).send({
-            message: "Failed to fetch vendor bookings.",
-        });
-    }
+    res.status(500).send({
+      message: "Failed to fetch vendor bookings.",
+    });
+  }
 });
+
+//vendor update booking status
+app.patch(
+  "/vendor/bookings/:id/status",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid booking ID.",
+        });
+      }
+
+      if (!["Accepted", "Rejected"].includes(status)) {
+        return res.status(400).send({
+          message: "Invalid booking status.",
+        });
+      }
+
+      const result = await bookings.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.user._id.toString(),
+          status: "Pending",
+        },
+        {
+          $set: { status },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          message: "Pending booking not found.",
+        });
+      }
+
+      res.send({
+        message: `Booking ${status.toLowerCase()} successfully.`,
+      });
+    } catch (error) {
+      console.error("Update booking status error:", error);
+
+      res.status(500).send({
+        message: "Failed to update booking status.",
+      });
+    }
+  }
+);
 
 
 //vendor related apis
