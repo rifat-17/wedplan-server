@@ -279,6 +279,7 @@ app.post("/services", verifyToken, verifyVendor, async (req, res) => {
       location: location.trim(),
       images: [imageUrl.href],
       status: "pending",
+      availability: "active",
       createdAt: new Date(),
     };
 
@@ -496,6 +497,55 @@ app.patch("/admin/services/:id/approve", verifyToken, verifyAdmin, async (req, r
   }
 });
 
+//admin reject
+app.patch("/admin/services/:id/reject", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid service ID",
+      });
+    }
+
+    const service = await services.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: "Service not found",
+      });
+    }
+
+    if (service.status !== "pending") {
+      return res.status(400).send({
+        message: "Only pending services can be rejected",
+      });
+    }
+
+    await services.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status: "rejected",
+          rejectedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      message: "Service rejected successfully",
+    });
+  } catch (error) {
+    console.error("Reject service error:", error);
+
+    res.status(500).send({
+      message: "Failed to reject service",
+    });
+  }
+});
+
 //block users
 app.patch(
   "/admin/users/:id/block",
@@ -612,6 +662,227 @@ app.patch(
 );
 
 
+//users
+
+app.get(
+  "/admin/users/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          message: "Invalid user ID",
+        });
+      }
+
+      const user = await users.findOne(
+        { _id: new ObjectId(id) },
+        {
+          projection: {
+            name: 1,
+            email: 1,
+            image: 1,
+            role: 1,
+            isBlocked: 1,
+            subscriptionPlan: 1,
+            businessName: 1,
+            createdAt: 1,
+          },
+        }
+      );
+
+      if (!user) {
+        return res.status(404).send({
+          message: "User not found",
+        });
+      }
+
+      res.send({ user });
+
+    } catch (error) {
+      console.error("Get user details error:", error);
+
+      res.status(500).send({
+        message: "Failed to fetch user details",
+      });
+    }
+  }
+);
+
+
+//services
+
+app.get(
+  "/admin/services",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { search, category, status } = req.query;
+
+      // Build MongoDB filter
+      const matchQuery = {};
+
+      // Search by service name
+      if (search) {
+        matchQuery.serviceName = {
+          $regex: search,
+          $options: "i",
+        };
+      }
+
+      // Filter by category
+      const allowedCategories = [
+        "Photography",
+        "Catering",
+        "Decoration",
+        "Venue",
+        "Makeup",
+        "Other",
+      ];
+
+      if (category) {
+        if (!allowedCategories.includes(category)) {
+          return res.status(400).send({
+            message: "Invalid service category",
+          });
+        }
+
+        matchQuery.category = category;
+      }
+
+      // Filter by approval status
+      const allowedStatuses = [
+        "pending",
+        "approved",
+        "rejected",
+      ];
+
+      if (status) {
+        if (!allowedStatuses.includes(status)) {
+          return res.status(400).send({
+            message: "Invalid service status",
+          });
+        }
+
+        matchQuery.status = status;
+      }
+
+      const allServices = await services
+        .aggregate([
+          // Apply filters first
+          {
+            $match: matchQuery,
+          },
+          {
+            $sort: { createdAt: -1 },
+          },
+          {
+            $addFields: {
+              vendorObjectId: {
+                $toObjectId: "$vendorId",
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "vendorObjectId",
+              foreignField: "_id",
+              as: "vendor",
+            },
+          },
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $project: {
+              vendorObjectId: 0,
+              "vendor.password": 0,
+              "vendor.emailVerified": 0,
+            },
+          },
+        ])
+        .toArray();
+
+      res.send({
+        services: allServices,
+        total: allServices.length,
+      });
+
+    } catch (error) {
+      console.error("Get admin services error:", error);
+
+      res.status(500).send({
+        message: "Failed to fetch services",
+      });
+    }
+  }
+);
+
+//availability
+app.patch("/admin/services/:id/availability", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { availability } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid service ID",
+      });
+    }
+
+    if (!["active", "inactive"].includes(availability)) {
+      return res.status(400).send({
+        message: "Invalid availability status",
+      });
+    }
+
+    const service = await services.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: "Service not found",
+      });
+    }
+
+    if (service.status !== "approved") {
+      return res.status(400).send({
+        message: "Only approved services can change availability",
+      });
+    }
+
+    await services.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          availability,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      message: `Service ${availability} successfully`,
+    });
+
+  } catch (error) {
+    console.error("Update availability error:", error);
+
+    res.status(500).send({
+      message: "Failed to update service availability",
+    });
+  }
+});
+
 app.get('/protected', verifyToken, (req, res) => {
   res.send({
     message: 'Authentication successful!',
@@ -624,7 +895,39 @@ app.get('/protected', verifyToken, (req, res) => {
 });
 
 
+//delete
+app.delete("/admin/services/:id", verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
 
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({
+                message: "Invalid service ID",
+            });
+        }
+
+        const result = await services.deleteOne({
+            _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+            return res.status(404).send({
+                message: "Service not found",
+            });
+        }
+
+        res.send({
+            message: "Service deleted successfully",
+        });
+
+    } catch (error) {
+        console.error("Delete service error:", error);
+
+        res.status(500).send({
+            message: "Failed to delete service",
+        });
+    }
+});
 
 
 
