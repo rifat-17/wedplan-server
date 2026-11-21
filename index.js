@@ -3,9 +3,12 @@ import cors from 'cors';
 import 'dotenv/config';
 import { MongoClient, ObjectId } from 'mongodb';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
+import Stripe from 'stripe';
 
 
 const app = express();
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT || 5001;
 
@@ -34,6 +37,11 @@ const users = database.collection("users");
 const services = database.collection("services");
 const bookings = database.collection("bookings");
 const transactions = database.collection("transactions");
+
+await transactions.createIndex(
+  { stripeSessionId: 1 },
+  { unique: true }
+);
 
 
 //jwt middleware
@@ -133,6 +141,234 @@ const verifyCustomer = async (req, res, next) => {
   }
   next();
 }
+
+
+//VeriffyPremium
+const verifyPremiumPayment = async (sessionId, vendorId) => {
+  // Retrieve Checkout Session from Stripe
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+  // Verify session ownership and payment details
+  if (
+    session.metadata?.vendorId !== vendorId ||
+    session.metadata?.plan !== "PREMIUM" ||
+    session.payment_status !== "paid" ||
+    session.status !== "complete" ||
+    session.mode !== "payment" ||
+    session.amount_total !== 8900 ||
+    session.currency !== "usd"
+  ) {
+    throw new Error("Payment verification failed.");
+  }
+
+  // Find the matching transaction
+  const transaction = await transactions.findOne({
+    stripeSessionId: session.id,
+    vendorId,
+  });
+
+  if (!transaction) {
+    throw new Error("Transaction not found.");
+  }
+
+  // Already processed
+  if (transaction.status === "paid") {
+    return {
+      alreadyPaid: true,
+    };
+  }
+
+  // Only pending transactions can be processed
+  if (transaction.status !== "pending") {
+    throw new Error("This transaction cannot be processed.");
+  }
+
+  // Activate Premium
+  await users.updateOne(
+    { _id: new ObjectId(vendorId) },
+    {
+      $set: {
+        subscriptionPlan: "PREMIUM",
+      },
+    }
+  );
+
+  // Update transaction
+  await transactions.updateOne(
+    {
+      _id: transaction._id,
+      status: "pending",
+    },
+    {
+      $set: {
+        status: "paid",
+        paidAt: new Date(),
+      },
+    }
+  );
+
+  return {
+    alreadyPaid: false,
+  };
+};
+
+
+//subscripton of vendor
+app.post("/vendor/subscription/checkout", verifyToken, verifyVendor, async (req, res) => {
+  try {
+
+    // Check if vendor already has Premium
+    if (req.user.subscriptionPlan === "PREMIUM") {
+      return res.status(400).send({
+        message: "You already have a Premium subscription.",
+      });
+    }
+
+    // Create Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "WedPlan Premium Plan",
+              description: "One-time payment for unlimited services and premium features.",
+            },
+            unit_amount: 8900,
+          },
+          quantity: 1,
+        },
+      ],
+
+      success_url: `${process.env.CLIENT_URL}/dashboard/vendor/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/vendor/payment-cancel`,
+
+      metadata: {
+        vendorId: req.user._id.toString(),
+        plan: "PREMIUM",
+      },
+    });
+
+    res.send({
+      url: session.url,
+    });
+    // Save pending transaction
+    await transactions.insertOne({
+      vendorId: req.user._id.toString(),
+      plan: "PREMIUM",
+      amount: session.amount_total,
+      currency: session.currency,
+      stripeSessionId: session.id,
+      stripeSubscriptionId: null,
+      status: "pending",
+      createdAt: new Date(),
+    });
+
+  } catch (error) {
+    console.error("Checkout error:", error);
+    res.status(500).send({
+      message: "Failed to create checkout session",
+    });
+  }
+});
+
+
+// Verify vendor premium payment
+app.post(
+  "/vendor/subscription/verify-payment",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { sessionId } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).send({
+          message: "Checkout session ID is required.",
+        });
+      }
+
+      const result = await verifyPremiumPayment(
+        sessionId,
+        req.user._id.toString()
+      );
+
+      return res.send({
+        success: true,
+        message: result.alreadyPaid
+          ? "Payment was already verified."
+          : "Premium plan activated successfully.",
+      });
+
+    } catch (error) {
+      console.error("Payment verification error:", error);
+
+      return res.status(400).send({
+        message: error.message || "Payment verification failed.",
+      });
+    }
+  }
+);
+
+
+// Recover pending Premium payments
+app.post(
+  "/vendor/subscription/recover-payment",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const vendorId = req.user._id.toString();
+
+      // Find all pending transactions for this vendor
+      const pendingTransactions = await transactions
+        .find({
+          vendorId,
+          plan: "PREMIUM",
+          status: "pending",
+        })
+        .toArray();
+
+      let recoveredCount = 0;
+
+      for (const transaction of pendingTransactions) {
+        try {
+          await verifyPremiumPayment(
+            transaction.stripeSessionId,
+            vendorId
+          );
+
+          recoveredCount++;
+        } catch (error) {
+          // This session may still be unpaid or incomplete.
+          console.log(
+            `Payment not recovered: ${transaction.stripeSessionId}`,
+            error.message
+          );
+        }
+      }
+
+      return res.send({
+        success: true,
+        recoveredCount,
+        message:
+          recoveredCount > 0
+            ? "Your Premium payment has been recovered."
+            : "No completed pending payments found.",
+      });
+
+    } catch (error) {
+      console.error("Payment recovery error:", error);
+
+      return res.status(500).send({
+        message: "Failed to recover payments.",
+      });
+    }
+  }
+);
+
 
 //service related apis
 // Get all approved and active services
@@ -413,9 +649,40 @@ app.get("/customer/bookings", verifyToken, verifyCustomer, async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
+    const bookingsWithDetails = await Promise.all(
+      customerBookings.map(async (booking) => {
+        const service = await services.findOne({
+          _id: new ObjectId(booking.serviceId),
+        });
+
+        const vendor = await users.findOne({
+          _id: new ObjectId(booking.vendorId),
+        });
+
+        return {
+          ...booking,
+          service: service
+            ? {
+              serviceName: service.serviceName,
+              category: service.category,
+              images: service.images,
+              price: service.price,
+            }
+            : null,
+          vendor: vendor
+            ? {
+              name: vendor.name,
+              email: vendor.email,
+              image: vendor.image,
+            }
+            : null,
+        };
+      })
+    );
+
     res.send({
-      bookings: customerBookings,
-      total: customerBookings.length,
+      bookings: bookingsWithDetails,
+      total: bookingsWithDetails.length,
     });
   } catch (error) {
     console.error("Get customer bookings error:", error);
@@ -1540,9 +1807,20 @@ app.get("/admin/transactions", verifyToken, verifyAdmin, async (req, res) => {
       { $match: matchQuery },
       {
         $project: {
-          vendorObjectId: 0,
-          "vendor.password": 0,
-          "vendor.emailVerified": 0,
+          _id: 1,
+          vendorId: 1,
+          plan: 1,
+          amount: 1,
+          currency: 1,
+          status: 1,
+          createdAt: 1,
+          vendor: {
+            _id: 1,
+            name: 1,
+            email: 1,
+            image: 1,
+            businessName: 1,
+          },
         },
       },
       { $sort: { createdAt: -1 } }
