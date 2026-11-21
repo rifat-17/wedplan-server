@@ -374,20 +374,44 @@ app.post(
 // Get all approved and active services
 app.get("/services", async (req, res) => {
   try {
-    const { category } = req.query;
+    const { search, category, location, sort } = req.query;
 
     const filter = {
       status: "approved",
       availability: "active",
     };
 
+    // Category filter
     if (category) {
       filter.category = category;
     }
 
+    const sortOption =
+      sort === "price_asc"
+        ? { price: 1 }
+        : sort === "price_desc"
+          ? { price: -1 }
+          : { createdAt: -1 };
+
+    // Search by service name
+    if (search) {
+      filter.serviceName = {
+        $regex: String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        $options: "i",
+      };
+    }
+
+    // Location filter
+    if (location) {
+      filter.location = {
+        $regex: String(location).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        $options: "i",
+      };
+    }
+
     const servicesList = await services
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort(sortOption)
       .toArray();
 
     res.send({
