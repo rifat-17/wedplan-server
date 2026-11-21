@@ -459,6 +459,87 @@ app.get("/services/:id", async (req, res) => {
 });
 
 
+app.get("/featured-services", async (req, res) => {
+  try {
+    const featuredServices = await services
+      .aggregate([
+        {
+          $match: {
+            status: "approved",
+            availability: "active",
+          },
+        },
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+        {
+          $limit: 6,
+        },
+        {
+          $lookup: {
+            from: "users",
+            let: {
+              vendorId: "$vendorId",
+            },
+            pipeline: [
+              {
+                $addFields: {
+                  userId: {
+                    $toString: "$_id",
+                  },
+                },
+              },
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$userId", "$$vendorId"],
+                  },
+                },
+              },
+              {
+                $project: {
+                  name: 1,
+                  image: 1,
+                  businessName: 1,
+                },
+              },
+            ],
+            as: "vendor",
+          },
+        },
+        {
+          $unwind: {
+            path: "$vendor",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            serviceName: 1,
+            category: 1,
+            price: 1,
+            location: 1,
+            images: 1,
+            vendor: 1,
+          },
+        },
+      ])
+      .toArray();
+
+    res.send({
+      services: featuredServices,
+    });
+  } catch (error) {
+    console.error("Featured services error:", error);
+
+    res.status(500).send({
+      message: "Failed to fetch featured services",
+    });
+  }
+});
+
 
 //booking related apis
 app.post("/bookings", verifyToken, verifyCustomer, async (req, res) => {
