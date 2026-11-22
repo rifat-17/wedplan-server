@@ -1253,59 +1253,6 @@ app.get("/admin/profile", verifyToken, verifyAdmin, async (req, res) => {
 });
 
 
-// Update logged-in admin profile
-app.patch("/admin/profile", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const { name, image } = req.body;
-
-    if (!name || typeof name !== "string" || !name.trim()) {
-      return res.status(400).send({
-        message: "Name is required",
-      });
-    }
-
-    if (image !== undefined && typeof image !== "string") {
-      return res.status(400).send({
-        message: "Invalid profile image",
-      });
-    }
-
-    await users.updateOne(
-      { _id: req.user._id },
-      {
-        $set: {
-          name: name.trim(),
-          ...(image !== undefined && { image: image.trim() }),
-        },
-      }
-    );
-
-    const updatedAdmin = await users.findOne(
-      { _id: req.user._id },
-      {
-        projection: {
-          name: 1,
-          email: 1,
-          image: 1,
-          role: 1,
-          isBlocked: 1,
-          createdAt: 1,
-        },
-      }
-    );
-
-    res.send({
-      message: "Profile updated successfully",
-      admin: updatedAdmin,
-    });
-  } catch (error) {
-    res.status(500).send({
-      message: "Failed to update admin profile",
-    });
-  }
-});
-
-
 
 
 //admin dashboard
