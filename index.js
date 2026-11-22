@@ -1097,125 +1097,125 @@ app.patch(
   }
 );
 
-//TODO: check it later
-//service related apis
-// app.post("/services", verifyToken, verifyVendor, async (req, res) => {
-//   try {
-//     // 1. Check vendor role
-//     //verifyVendor
 
-//     // 2. Get form data
-//     const {
-//       serviceName,
-//       category,
-//       description,
-//       price,
-//       location,
-//       images,
-//     } = req.body;
+// service related apis
+app.post("/services", verifyToken, verifyVendor, async (req, res) => {
+  try {
+    // 1. Check vendor role
+    //verifyVendor
 
-//     // 3. Validate required text fields
-//     if (
-//       typeof serviceName !== "string" ||
-//       !serviceName.trim() ||
-//       typeof category !== "string" ||
-//       !category.trim() ||
-//       typeof description !== "string" ||
-//       !description.trim() ||
-//       typeof location !== "string" ||
-//       !location.trim()
-//     ) {
-//       return res.status(400).send({
-//         message: "All fields are required",
-//       });
-//     }
+    // 2. Get form data
+    const {
+      serviceName,
+      category,
+      description,
+      price,
+      location,
+      images,
+    } = req.body;
 
-//     // 4. Validate category
-//     const allowedCategories = [
-//       "Photography",
-//       "Catering",
-//       "Decoration",
-//       "Venue",
-//       "Makeup",
-//       "Other",
-//     ];
+    // 3. Validate required text fields
+    if (
+      typeof serviceName !== "string" ||
+      !serviceName.trim() ||
+      typeof category !== "string" ||
+      !category.trim() ||
+      typeof description !== "string" ||
+      !description.trim() ||
+      typeof location !== "string" ||
+      !location.trim()
+    ) {
+      return res.status(400).send({
+        message: "All fields are required",
+      });
+    }
 
-//     if (!allowedCategories.includes(category)) {
-//       return res.status(400).send({
-//         message: "Invalid service category",
-//       });
-//     }
+    // 4. Validate category
+    const allowedCategories = [
+      "Photography",
+      "Catering",
+      "Decoration",
+      "Venue",
+      "Makeup",
+      "Other",
+    ];
 
-//     // 5. Validate price
-//     const servicePrice = Number(price);
+    if (!allowedCategories.includes(category)) {
+      return res.status(400).send({
+        message: "Invalid service category",
+      });
+    }
 
-//     if (
-//       price === undefined ||
-//       price === null ||
-//       price === "" ||
-//       !Number.isFinite(servicePrice) ||
-//       servicePrice <= 0
-//     ) {
-//       return res.status(400).send({
-//         message: "Price must be a valid positive number",
-//       });
-//     }
+    // 5. Validate price
+    const servicePrice = Number(price);
 
-//     // 6. Validate image URL
-//     if (
-//       !Array.isArray(images) ||
-//       images.length !== 1 ||
-//       typeof images[0] !== "string"
-//     ) {
-//       return res.status(400).send({
-//         message: "Please provide one service image",
-//       });
-//     }
+    if (
+      price === undefined ||
+      price === null ||
+      price === "" ||
+      !Number.isFinite(servicePrice) ||
+      servicePrice <= 0
+    ) {
+      return res.status(400).send({
+        message: "Price must be a valid positive number",
+      });
+    }
 
-//     let imageUrl;
+    // 6. Validate image URL
+    if (
+      !Array.isArray(images) ||
+      images.length !== 1 ||
+      typeof images[0] !== "string"
+    ) {
+      return res.status(400).send({
+        message: "Please provide one service image",
+      });
+    }
 
-//     try {
-//       imageUrl = new URL(images[0]);
+    let imageUrl;
 
-//       if (imageUrl.protocol !== "https:") {
-//         throw new Error("Invalid image URL");
-//       }
-//     } catch {
-//       return res.status(400).send({
-//         message: "Please provide a valid HTTPS image URL",
-//       });
-//     }
+    try {
+      imageUrl = new URL(images[0]);
 
-//     // 7. Prepare service document
-//     const serviceData = {
-//       vendorId: req.user._id.toString(),
-//       serviceName: serviceName.trim(),
-//       category,
-//       description: description.trim(),
-//       price: servicePrice,
-//       location: location.trim(),
-//       images: [imageUrl.href],
-//       status: "pending",
-//       availability: "active",
-//       createdAt: new Date(),
-//     };
+      if (imageUrl.protocol !== "https:") {
+        throw new Error("Invalid image URL");
+      }
+    } catch {
+      return res.status(400).send({
+        message: "Please provide a valid HTTPS image URL",
+      });
+    }
 
-//     // 8. Save to MongoDB
-//     const result = await services.insertOne(serviceData);
+    // 7. Prepare service document
+    const serviceData = {
+      vendorId: req.user._id.toString(),
+      serviceName: serviceName.trim(),
+      category,
+      description: description.trim(),
+      price: servicePrice,
+      location: location.trim(),
+      images: [imageUrl.href],
+      status: "pending",
+      availability: "active",
+      createdAt: new Date(),
+    };
 
-//     res.status(201).send({
-//       message: "Service submitted successfully. Waiting for admin approval.",
-//       insertedId: result.insertedId,
-//     });
+    // 8. Save to MongoDB
+    const result = await services.insertOne(serviceData);
 
-//   } catch (error) {
-//     console.error("Add service error:", error);
+    res.status(201).send({
+      message: "Service submitted successfully. Waiting for admin approval.",
+      insertedId: result.insertedId,
+    });
 
-//     res.status(500).send({
-//       message: "Failed to add service",
-//     });
-//   }
-// });
+  } catch (error) {
+    console.error("Add service error:", error);
+
+    res.status(500).send({
+      message: "Failed to add service",
+    });
+  }
+});
 
 //admin related apis
 
